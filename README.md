@@ -1,6 +1,6 @@
 # ziwei-iztro-reader
 
-一个基于 `iztro` 的 Codex Skill，用于生成紫微斗数本命盘与流运快照，并输出可用于分层解读的结构化 JSON。
+一个基于 `iztro` 的 Skill，用于生成紫微斗数本命盘与流运快照，并输出可用于分层解读的结构化 JSON。
 
 ## 项目定位
 
