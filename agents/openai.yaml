@@ -1,0 +1,4 @@
+interface:
+  display_name: "紫微排盘与解读"
+  short_description: "基于 iztro 的紫微本命盘与流年流月流日分层解读"
+  default_prompt: "Use $ziwei-iztro-reader to generate a Zi Wei chart and layered interpretation from birth details."
