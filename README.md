@@ -17,22 +17,26 @@
 - `references/interpretation-template.md`：解读模板参考
 - `已知问题.md`：当前已确认问题与影响评估
 
-## 快速开始
+## 快速使用（Skill 模式）
 
-1. 安装依赖
+适用于支持 Skill 自动安装/运行的 AI 客户端（如 Claude、Cursor、Codex 等）：
+
+1. 下载或克隆本仓库
+2. 将整个 `ziwei-iztro-reader` 文件夹放到客户端约定的 skills 目录（或通过客户端导入本地 skill）
+3. 在客户端刷新/重启后启用该 skill
+4. 按 `references/input-schema.md` 提供输入参数即可使用
+
+## 本地调试（可选）
+
+如果你要在命令行直接验证脚本：
 
 ```bash
 cd scripts
 npm install
-```
-
-2. 运行示例
-
-```bash
 node iztro_runner.mjs example.input.json
 ```
 
-3. 读取输出
+输出核心字段：
 
 - `natal`：本命盘完整结构
 - `current`：基准日期流运快照
