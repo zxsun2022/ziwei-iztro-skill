@@ -45,9 +45,7 @@
 
 - `normalizedInput`：标准化输入与日期解析结果
 - `outputPolicy`：输出策略与免责声明（固定 `full`）
-- `natal`：本命盘完整结构（astrolabe）
-- `current`：当前日期流运（decadal/yearly/monthly/daily/hourly）
-- `future[]`：未来日期的流运快照
+- `natalSummary`：命盘元数据（命主、身主、五行局、干支、星座、生肖等，不含逐宫数据）
 - `currentDetailed`：当前日期的详细分层快照，含逐宫合并明细
 - `futureDetailed[]`：未来日期的详细分层快照，含逐宫合并明细
 
@@ -57,8 +55,8 @@
 - `palaceName` / `palaceAlias` / `palaceDisplayName`
 - `heavenlyStem` / `earthlyBranch`
 - `natal.majorStars[]` / `natal.minorStars[]` / `natal.adjectiveStars[]`
-- `flowStarsByRole.*`：按“宫位角色名称”映射后的流星（默认用于解读）
-- `flowStarsByIndex.*`：按“固定宫位索引”映射后的流星（仅调试模式输出）
+- `flowStarsByRole.*`：按"宫位角色名称"映射后的流星（默认用于解读）
+- `flowStarsByIndex.*`：按"固定宫位索引"映射后的流星（仅调试模式输出）
 - `flowRoleAtIndex.*`：该索引宫位在对应层级下扮演的角色名（仅调试模式输出）
 - `yearlyDecStar.suiqian12` / `yearlyDecStar.jiangqian12`
 - `yearlyDecStarByIndex.suiqian12` / `yearlyDecStarByIndex.jiangqian12`（仅调试模式输出）

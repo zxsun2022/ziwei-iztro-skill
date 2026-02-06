@@ -3,6 +3,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
 function fail(message) {
   console.error(`[ziwei-iztro-runner] ${message}`);
   process.exit(1);
@@ -13,15 +17,31 @@ function parseInputFile(filePath) {
     fail('Missing input JSON path. Usage: node iztro_runner.mjs <input.json>');
   }
 
+  const resolved = resolve(process.cwd(), filePath);
+
+  let content;
   try {
-    const content = readFileSync(resolve(process.cwd(), filePath), 'utf-8');
+    content = readFileSync(resolved, 'utf-8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      fail(`Input file not found: ${resolved}`);
+    }
+    fail(`Cannot read input file: ${error.message}`);
+  }
+
+  try {
     return JSON.parse(content);
   } catch (error) {
-    fail(`Cannot read input file: ${error.message}`);
+    fail(`Invalid JSON in input file: ${error.message}`);
   }
 }
 
-function normalizeYmd(dateText, fieldName) {
+/**
+ * Normalize a YYYY-M-D date string. When isLunar is true, skip the Gregorian
+ * round-trip check (lunar months can have 30 days that don't exist in the
+ * corresponding Gregorian month).
+ */
+function normalizeYmd(dateText, fieldName, { isLunar = false } = {}) {
   if (typeof dateText !== 'string') {
     fail(`${fieldName} must be a string in YYYY-M-D or YYYY-MM-DD.`);
   }
@@ -39,17 +59,22 @@ function normalizeYmd(dateText, fieldName) {
     fail(`${fieldName} month must be 1..12.`);
   }
 
-  if (day < 1 || day > 31) {
-    fail(`${fieldName} day must be 1..31.`);
+  // Lunar months have at most 30 days; solar months at most 31.
+  const maxDay = isLunar ? 30 : 31;
+  if (day < 1 || day > maxDay) {
+    fail(`${fieldName} day must be 1..${maxDay}.`);
   }
 
-  const utc = new Date(Date.UTC(year, month - 1, day));
-  if (
-    utc.getUTCFullYear() !== year ||
-    utc.getUTCMonth() + 1 !== month ||
-    utc.getUTCDate() !== day
-  ) {
-    fail(`${fieldName} is not a valid calendar date.`);
+  // For solar dates, verify the date actually exists in the Gregorian calendar.
+  if (!isLunar) {
+    const utc = new Date(Date.UTC(year, month - 1, day));
+    if (
+      utc.getUTCFullYear() !== year ||
+      utc.getUTCMonth() + 1 !== month ||
+      utc.getUTCDate() !== day
+    ) {
+      fail(`${fieldName} is not a valid calendar date.`);
+    }
   }
 
   return `${year}-${month}-${day}`;
@@ -75,12 +100,19 @@ function dateInTimeZone(timeZone, instant = new Date()) {
   return `${Number(year)}-${Number(month)}-${Number(day)}`;
 }
 
+/**
+ * Create a Date at noon on the given calendar date. Uses the numeric Date
+ * constructor so that getFullYear/getMonth/getDate always return the intended
+ * values — no dependency on process.env.TZ.
+ */
 function localNoonDate(dateText) {
-  const [year, month, day] = dateText.split('-').map((v) => Number(v));
-  const mm = String(month).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  return new Date(`${year}-${mm}-${dd}T12:00:00`);
+  const [year, month, day] = dateText.split('-').map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0);
 }
+
+// ---------------------------------------------------------------------------
+// JSON sanitisation
+// ---------------------------------------------------------------------------
 
 function buildSafeReplacer() {
   const seen = new WeakSet();
@@ -105,24 +137,18 @@ function sanitizeForJson(data) {
   return JSON.parse(JSON.stringify(data, buildSafeReplacer()));
 }
 
-function sanitizeSnapshot(snapshot) {
-  const clean = sanitizeForJson(snapshot);
-  if (clean && typeof clean === 'object' && 'astrolabe' in clean) {
-    delete clean.astrolabe;
-  }
-  return clean;
-}
+// ---------------------------------------------------------------------------
+// Mutagen (四化) tag maps
+// ---------------------------------------------------------------------------
+
+const MUTAGEN_LABELS = ['禄', '权', '科', '忌'];
 
 function buildMutagenMap(stars = [], scopeName) {
-  const labelOrder = ['禄', '权', '科', '忌'];
   const map = new Map();
 
   stars.forEach((starName, index) => {
-    if (!starName) {
-      return;
-    }
-
-    const label = labelOrder[index] || String(index);
+    if (!starName) return;
+    const label = MUTAGEN_LABELS[index] || String(index);
     const existing = map.get(starName) || [];
     existing.push(`${scopeName}${label}`);
     map.set(starName, existing);
@@ -137,10 +163,7 @@ function collectNatalMutagenTags(palaces = []) {
   palaces.forEach((palace) => {
     const stars = [...(palace.majorStars || []), ...(palace.minorStars || [])];
     stars.forEach((star) => {
-      if (!star?.name || !star?.mutagen) {
-        return;
-      }
-
+      if (!star?.name || !star?.mutagen) return;
       const existing = map.get(star.name) || [];
       existing.push(`本命${star.mutagen}`);
       map.set(star.name, existing);
@@ -149,6 +172,21 @@ function collectNatalMutagenTags(palaces = []) {
 
   return map;
 }
+
+function buildAllMutagenMaps(astrolabe, snapshot) {
+  return [
+    collectNatalMutagenTags(astrolabe.palaces || []),
+    buildMutagenMap(snapshot?.decadal?.mutagen, '大限'),
+    buildMutagenMap(snapshot?.yearly?.mutagen, '流年'),
+    buildMutagenMap(snapshot?.monthly?.mutagen, '流月'),
+    buildMutagenMap(snapshot?.daily?.mutagen, '流日'),
+    buildMutagenMap(snapshot?.hourly?.mutagen, '流时'),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Scope star maps (流星按宫位名/索引映射)
+// ---------------------------------------------------------------------------
 
 function buildScopePalaceMap(scope) {
   const palaceNameList = Array.isArray(scope?.palaceNames) ? scope.palaceNames : [];
@@ -162,6 +200,17 @@ function buildScopePalaceMap(scope) {
   return map;
 }
 
+function buildAllScopePalaceMaps(snapshot) {
+  return {
+    decadal: buildScopePalaceMap(snapshot?.decadal),
+    age: buildScopePalaceMap(snapshot?.age),
+    yearly: buildScopePalaceMap(snapshot?.yearly),
+    monthly: buildScopePalaceMap(snapshot?.monthly),
+    daily: buildScopePalaceMap(snapshot?.daily),
+    hourly: buildScopePalaceMap(snapshot?.hourly),
+  };
+}
+
 function scopeStarsAtIndex(scope, index) {
   const starsList = Array.isArray(scope?.stars) ? scope.stars : [];
   return starsList[index] || [];
@@ -172,13 +221,15 @@ function scopeRoleAtIndex(scope, index) {
   return palaceNames[index] || null;
 }
 
+// ---------------------------------------------------------------------------
+// Star entry helpers
+// ---------------------------------------------------------------------------
+
 function starEntryWithTags(star, tagMaps) {
   const tags = [];
   tagMaps.forEach((map) => {
     const matched = map.get(star.name);
-    if (matched) {
-      tags.push(...matched);
-    }
+    if (matched) tags.push(...matched);
   });
 
   return {
@@ -191,141 +242,125 @@ function starEntryWithTags(star, tagMaps) {
   };
 }
 
-function cloneStarEntry(entry) {
+// ---------------------------------------------------------------------------
+// Yearly dec star context (岁前/将前十二神)
+// ---------------------------------------------------------------------------
+
+function buildYearlyDecStarContext(snapshot) {
+  const suiqian = snapshot?.yearly?.yearlyDecStar?.suiqian12 || [];
+  const jiangqian = snapshot?.yearly?.yearlyDecStar?.jiangqian12 || [];
+  const palaceNames = snapshot?.yearly?.palaceNames || [];
+
+  const indexByPalace = new Map();
+  palaceNames.forEach((name, index) => {
+    indexByPalace.set(name, index);
+  });
+
+  return { suiqian, jiangqian, indexByPalace };
+}
+
+// ---------------------------------------------------------------------------
+// Single palace entry builder
+// ---------------------------------------------------------------------------
+
+const PALACE_ALIASES = {
+  官禄: '事业',
+  仆役: '交友',
+};
+
+const SCOPE_KEYS = ['decadal', 'age', 'yearly', 'monthly', 'daily', 'hourly'];
+
+function buildFlowStarsByRole(palace, scopeMaps, tagMaps) {
+  const result = {};
+  for (const key of SCOPE_KEYS) {
+    result[key] = (scopeMaps[key].get(palace.name) || []).map((s) => starEntryWithTags(s, tagMaps));
+  }
+  return result;
+}
+
+function buildFlowStarsByIndex(palace, snapshot, tagMaps) {
+  const result = {};
+  for (const key of SCOPE_KEYS) {
+    result[key] = scopeStarsAtIndex(snapshot?.[key], palace.index).map((s) =>
+      starEntryWithTags(s, tagMaps),
+    );
+  }
+  return result;
+}
+
+function buildFlowRoleAtIndex(palace, snapshot) {
+  const result = {};
+  for (const key of SCOPE_KEYS) {
+    result[key] = scopeRoleAtIndex(snapshot?.[key], palace.index);
+  }
+  return result;
+}
+
+function buildPalaceEntry(palace, ctx) {
+  const { tagMaps, scopeMaps, yearlyDec, snapshot, includeIndexMapping } = ctx;
+
+  const yearlyIndex = yearlyDec.indexByPalace.get(palace.name);
+
+  const flowStarsByRole = buildFlowStarsByRole(palace, scopeMaps, tagMaps);
+
   return {
-    ...entry,
-    tags: Array.isArray(entry?.tags) ? [...entry.tags] : [],
+    palaceIndex: palace.index,
+    palaceName: palace.name,
+    palaceAlias: PALACE_ALIASES[palace.name] || null,
+    palaceDisplayName: `${PALACE_ALIASES[palace.name] || palace.name}宫${palace.isBodyPalace ? '-身宫' : ''}`,
+    heavenlyStem: palace.heavenlyStem,
+    earthlyBranch: palace.earthlyBranch,
+    isBodyPalace: Boolean(palace.isBodyPalace),
+    isOriginalPalace: Boolean(palace.isOriginalPalace),
+    changsheng12: palace.changsheng12 || null,
+    boshi12: palace.boshi12 || null,
+    jiangqian12: palace.jiangqian12 || null,
+    suiqian12: palace.suiqian12 || null,
+    yearlyDecStar:
+      yearlyIndex === undefined
+        ? { suiqian12: null, jiangqian12: null }
+        : {
+            suiqian12: yearlyDec.suiqian[yearlyIndex] || null,
+            jiangqian12: yearlyDec.jiangqian[yearlyIndex] || null,
+          },
+    yearlyDecStarByIndex: includeIndexMapping
+      ? {
+          suiqian12: yearlyDec.suiqian[palace.index] || null,
+          jiangqian12: yearlyDec.jiangqian[palace.index] || null,
+        }
+      : null,
+    natal: {
+      majorStars: (palace.majorStars || []).map((s) => starEntryWithTags(s, tagMaps)),
+      minorStars: (palace.minorStars || []).map((s) => starEntryWithTags(s, tagMaps)),
+      adjectiveStars: (palace.adjectiveStars || []).map((s) => starEntryWithTags(s, tagMaps)),
+    },
+    flowStarsByRole,
+    flowStarsByIndex: includeIndexMapping
+      ? buildFlowStarsByIndex(palace, snapshot, tagMaps)
+      : null,
+    flowRoleAtIndex: includeIndexMapping ? buildFlowRoleAtIndex(palace, snapshot) : null,
+    decadalRange: Array.isArray(palace?.decadal?.range) ? [...palace.decadal.range] : null,
+    decadalGanZhi: palace?.decadal
+      ? `${palace.decadal.heavenlyStem}${palace.decadal.earthlyBranch}`
+      : null,
+    ages: Array.isArray(palace?.ages) ? [...palace.ages] : [],
   };
 }
 
-function cloneFlowStars(flowStars) {
-  return {
-    decadal: (flowStars?.decadal || []).map(cloneStarEntry),
-    age: (flowStars?.age || []).map(cloneStarEntry),
-    yearly: (flowStars?.yearly || []).map(cloneStarEntry),
-    monthly: (flowStars?.monthly || []).map(cloneStarEntry),
-    daily: (flowStars?.daily || []).map(cloneStarEntry),
-    hourly: (flowStars?.hourly || []).map(cloneStarEntry),
-  };
-}
+// ---------------------------------------------------------------------------
+// Detailed report builders
+// ---------------------------------------------------------------------------
 
 function buildDetailedPalaceReport(astrolabe, snapshot, options = {}) {
   const includeIndexMapping = options.includeIndexMapping === true;
-  const natalMutagenMap = collectNatalMutagenTags(astrolabe.palaces || []);
-  const decadalMutagenMap = buildMutagenMap(snapshot?.decadal?.mutagen, '大限');
-  const yearlyMutagenMap = buildMutagenMap(snapshot?.yearly?.mutagen, '流年');
-  const monthlyMutagenMap = buildMutagenMap(snapshot?.monthly?.mutagen, '流月');
-  const dailyMutagenMap = buildMutagenMap(snapshot?.daily?.mutagen, '流日');
-  const hourlyMutagenMap = buildMutagenMap(snapshot?.hourly?.mutagen, '流时');
 
-  const tagMaps = [
-    natalMutagenMap,
-    decadalMutagenMap,
-    yearlyMutagenMap,
-    monthlyMutagenMap,
-    dailyMutagenMap,
-    hourlyMutagenMap,
-  ];
+  const tagMaps = buildAllMutagenMaps(astrolabe, snapshot);
+  const scopeMaps = buildAllScopePalaceMaps(snapshot);
+  const yearlyDec = buildYearlyDecStarContext(snapshot);
 
-  const yearlyPalaceStars = buildScopePalaceMap(snapshot?.yearly);
-  const monthlyPalaceStars = buildScopePalaceMap(snapshot?.monthly);
-  const dailyPalaceStars = buildScopePalaceMap(snapshot?.daily);
-  const hourlyPalaceStars = buildScopePalaceMap(snapshot?.hourly);
-  const decadalPalaceStars = buildScopePalaceMap(snapshot?.decadal);
-  const agePalaceStars = buildScopePalaceMap(snapshot?.age);
+  const ctx = { tagMaps, scopeMaps, yearlyDec, snapshot, includeIndexMapping };
 
-  const yearlySuiqian = snapshot?.yearly?.yearlyDecStar?.suiqian12 || [];
-  const yearlyJiangqian = snapshot?.yearly?.yearlyDecStar?.jiangqian12 || [];
-  const yearlyPalaceNames = snapshot?.yearly?.palaceNames || [];
-
-  const yearlyIndexByPalace = new Map();
-  yearlyPalaceNames.forEach((name, index) => {
-    yearlyIndexByPalace.set(name, index);
-  });
-
-  const palaceNameAlias = {
-    官禄: '事业',
-    仆役: '交友',
-  };
-
-  return (astrolabe.palaces || []).map((palace) => {
-    const yearlyIndex = yearlyIndexByPalace.get(palace.name);
-    const natalMajor = (palace.majorStars || []).map((star) => starEntryWithTags(star, tagMaps));
-    const natalMinor = (palace.minorStars || []).map((star) => starEntryWithTags(star, tagMaps));
-    const natalAdj = (palace.adjectiveStars || []).map((star) => starEntryWithTags(star, tagMaps));
-
-    const flows = {
-      decadal: (decadalPalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-      age: (agePalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-      yearly: (yearlyPalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-      monthly: (monthlyPalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-      daily: (dailyPalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-      hourly: (hourlyPalaceStars.get(palace.name) || []).map((star) => starEntryWithTags(star, tagMaps)),
-    };
-
-    const flowsByIndex = includeIndexMapping
-      ? {
-          decadal: scopeStarsAtIndex(snapshot?.decadal, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-          age: scopeStarsAtIndex(snapshot?.age, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-          yearly: scopeStarsAtIndex(snapshot?.yearly, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-          monthly: scopeStarsAtIndex(snapshot?.monthly, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-          daily: scopeStarsAtIndex(snapshot?.daily, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-          hourly: scopeStarsAtIndex(snapshot?.hourly, palace.index).map((star) => starEntryWithTags(star, tagMaps)),
-        }
-      : null;
-
-    const flowRoleAtIndex = includeIndexMapping
-      ? {
-          decadal: scopeRoleAtIndex(snapshot?.decadal, palace.index),
-          age: scopeRoleAtIndex(snapshot?.age, palace.index),
-          yearly: scopeRoleAtIndex(snapshot?.yearly, palace.index),
-          monthly: scopeRoleAtIndex(snapshot?.monthly, palace.index),
-          daily: scopeRoleAtIndex(snapshot?.daily, palace.index),
-          hourly: scopeRoleAtIndex(snapshot?.hourly, palace.index),
-        }
-      : null;
-
-    return {
-      palaceIndex: palace.index,
-      palaceName: palace.name,
-      palaceAlias: palaceNameAlias[palace.name] || null,
-      palaceDisplayName: `${palaceNameAlias[palace.name] || palace.name}宫${palace.isBodyPalace ? '-身宫' : ''}`,
-      heavenlyStem: palace.heavenlyStem,
-      earthlyBranch: palace.earthlyBranch,
-      isBodyPalace: Boolean(palace.isBodyPalace),
-      isOriginalPalace: Boolean(palace.isOriginalPalace),
-      changsheng12: palace.changsheng12 || null,
-      boshi12: palace.boshi12 || null,
-      jiangqian12: palace.jiangqian12 || null,
-      suiqian12: palace.suiqian12 || null,
-      yearlyDecStar: yearlyIndex === undefined
-        ? { suiqian12: null, jiangqian12: null }
-        : {
-            suiqian12: yearlySuiqian[yearlyIndex] || null,
-            jiangqian12: yearlyJiangqian[yearlyIndex] || null,
-          },
-      yearlyDecStarByIndex: includeIndexMapping
-        ? {
-            suiqian12: yearlySuiqian[palace.index] || null,
-            jiangqian12: yearlyJiangqian[palace.index] || null,
-          }
-        : null,
-      natal: {
-        majorStars: natalMajor,
-        minorStars: natalMinor,
-        adjectiveStars: natalAdj,
-      },
-      flowStars: flows,
-      flowStarsByRole: cloneFlowStars(flows),
-      flowStarsByIndex: includeIndexMapping ? flowsByIndex : null,
-      flowRoleAtIndex,
-      decadalRange: Array.isArray(palace?.decadal?.range) ? [...palace.decadal.range] : null,
-      decadalGanZhi: palace?.decadal
-        ? `${palace.decadal.heavenlyStem}${palace.decadal.earthlyBranch}`
-        : null,
-      ages: Array.isArray(palace?.ages) ? [...palace.ages] : [],
-    };
-  });
+  return (astrolabe.palaces || []).map((palace) => buildPalaceEntry(palace, ctx));
 }
 
 function buildDetailedSnapshot(astrolabe, snapshot, targetSolarDate, options = {}) {
@@ -342,6 +377,33 @@ function buildDetailedSnapshot(astrolabe, snapshot, targetSolarDate, options = {
   };
 }
 
+/**
+ * Extract key chart-level metadata from the raw astrolabe, without dumping
+ * the full (and large) palaces array.
+ */
+function buildNatalSummary(astrolabe) {
+  return {
+    gender: astrolabe.gender || null,
+    solarDate: astrolabe.solarDate || null,
+    lunarDate: astrolabe.lunarDate || null,
+    chineseDate: astrolabe.chineseDate || null,
+    rawDates: astrolabe.rawDates || null,
+    time: astrolabe.time || null,
+    timeRange: astrolabe.timeRange || null,
+    sign: astrolabe.sign || null,
+    zodiac: astrolabe.zodiac || null,
+    earthlyBranchOfBodyPalace: astrolabe.earthlyBranchOfBodyPalace || null,
+    earthlyBranchOfSoulPalace: astrolabe.earthlyBranchOfSoulPalace || null,
+    soul: astrolabe.soul || null,
+    body: astrolabe.body || null,
+    fiveElementsClass: astrolabe.fiveElementsClass || null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Input validation
+// ---------------------------------------------------------------------------
+
 const input = parseInputFile(process.argv[2]);
 
 const birth = input.birth ?? {};
@@ -356,7 +418,7 @@ if (birth.confirmed !== true) {
   fail('birth.confirmed must be true before generating chart output.');
 }
 
-const birthDate = normalizeYmd(birth.date, 'birth.date');
+const birthDate = normalizeYmd(birth.date, 'birth.date', { isLunar: calendar === 'lunar' });
 const timeIndex = Number(birth.timeIndex);
 if (!Number.isInteger(timeIndex) || timeIndex < 0 || timeIndex > 12) {
   fail('birth.timeIndex must be an integer from 0 to 12.');
@@ -373,7 +435,6 @@ if (!birthplace) {
 }
 
 const timezone = query.timezone || 'Asia/Shanghai';
-process.env.TZ = timezone;
 const includeIndexMapping = query?.debug?.includeIndexMapping === true;
 
 let baseDateText;
@@ -383,16 +444,38 @@ if (!query.baseDate || query.baseDate === 'today') {
   baseDateText = normalizeYmd(query.baseDate, 'query.baseDate');
 }
 
+// ---------------------------------------------------------------------------
+// Import iztro (with differentiated error messages)
+// ---------------------------------------------------------------------------
+
 let astro;
 try {
   ({ astro } = await import('iztro'));
 } catch (error) {
-  fail(`iztro is not installed. Run npm install in scripts/. Original error: ${error.message}`);
+  if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'MODULE_NOT_FOUND') {
+    fail(
+      'iztro is not installed. Run: cd scripts && npm install\n' +
+        `  Original error: ${error.message}`,
+    );
+  }
+  fail(
+    `Failed to import iztro (possibly version or Node.js compatibility issue).\n` +
+      `  Node version: ${process.version}\n` +
+      `  Original error: ${error.message}`,
+  );
 }
 
 if (!astro?.bySolar || !astro?.byLunar) {
-  fail('iztro API is not available: missing astro.bySolar/byLunar.');
+  const available = astro ? Object.keys(astro).join(', ') : '(null)';
+  fail(
+    `iztro API incompatible: astro.bySolar/byLunar not found.\n` +
+      `  Available exports: ${available}`,
+  );
 }
+
+// ---------------------------------------------------------------------------
+// Generate chart
+// ---------------------------------------------------------------------------
 
 const language = birth.language || 'zh-CN';
 const fixLeap = birth.fixLeap ?? true;
@@ -409,15 +492,17 @@ if (!astrolabe?.horoscope) {
   fail('astrolabe.horoscope is not available from iztro result.');
 }
 
+// ---------------------------------------------------------------------------
+// Compute horoscope snapshots
+// ---------------------------------------------------------------------------
+
 const currentDate = localNoonDate(baseDateText);
 const currentRaw = astrolabe.horoscope(currentDate);
-const current = sanitizeSnapshot(currentRaw);
 const currentDetailed = buildDetailedSnapshot(astrolabe, currentRaw, baseDateText, {
   includeIndexMapping,
 });
 
 const futureDates = Array.isArray(query.futureDates) ? query.futureDates : [];
-const future = [];
 const futureDetailed = [];
 
 futureDates.forEach((rawDate, index) => {
@@ -425,17 +510,16 @@ futureDates.forEach((rawDate, index) => {
   const targetDate = localNoonDate(normalized);
   const snapshotRaw = astrolabe.horoscope(targetDate);
 
-  future.push({
-    targetSolarDate: normalized,
-    snapshot: sanitizeSnapshot(snapshotRaw),
-  });
-
   futureDetailed.push(
     buildDetailedSnapshot(astrolabe, snapshotRaw, normalized, {
       includeIndexMapping,
     }),
   );
 });
+
+// ---------------------------------------------------------------------------
+// Assemble & output
+// ---------------------------------------------------------------------------
 
 const output = {
   generatedAt: new Date().toISOString(),
@@ -458,9 +542,7 @@ const output = {
     disclaimer:
       'For cultural study and entertainment reference only. No true-solar-time correction is applied by default.',
   },
-  natal: astrolabe,
-  current,
-  future,
+  natalSummary: buildNatalSummary(astrolabe),
   currentDetailed,
   futureDetailed,
 };

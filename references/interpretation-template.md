@@ -9,20 +9,20 @@
 - 参考日期（公历 + 农历）
 - 数据口径声明：默认使用 `byRole`（宫位角色映射）
 
-2. 本命盘（仅 `natal`）
+2. 本命盘（`natalSummary` + `currentDetailed.palaces[].natal`）
 - 命宫/身宫核心结构
 - 主要星曜与性格、长期倾向
 
-3. 流年（`natal + current.yearly`）
+3. 流年（本命 + yearly 层数据）
 - 年度主线、机会、风险
 
-4. 流月（`natal + current.yearly + current.monthly`）
+4. 流月（本命 + yearly + monthly 层数据）
 - 本月节奏与重点事项
 
-5. 流日（`natal + current.yearly + current.monthly + current.daily`）
+5. 流日（本命 + yearly + monthly + daily 层数据）
 - 当日建议、执行优先级
 
-6. 未来辅助（`future[]`）
+6. 未来辅助（`futureDetailed[]`）
 - 按日期对比趋势变化
 - 标注关键窗口（上升/回撤/观望）
 

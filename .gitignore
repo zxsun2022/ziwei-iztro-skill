@@ -26,6 +26,7 @@ coverage/
 scripts/user*.input.json
 scripts/user*.output.json
 scripts/*.debug.output.json
+scripts/_test_*.json
 
 # Temporary files
 *.tmp
