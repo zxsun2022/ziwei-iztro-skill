@@ -36,7 +36,7 @@
 git clone <仓库地址>
 
 # 2. 安装依赖（只需一次）
-cd ziwei-iztro-reader/scripts
+cd ziwei-iztro-skill/scripts
 npm install
 
 # 3. 重启 Claude Code，开始对话
@@ -121,7 +121,7 @@ AI 会在对话中主动询问以下信息（如果你没有提供）：
 ## 项目结构
 
 ```
-ziwei-iztro-reader/
+ziwei-iztro-skill/
 ├── SKILL.md                  # Skill 定义（AI 的指令文档）
 ├── scripts/
 │   ├── iztro_runner.mjs      # 排盘脚本（调用 iztro 生成命盘数据）
@@ -134,6 +134,14 @@ ziwei-iztro-reader/
 │   └── openai.yaml           # OpenAI Agent 配置
 └── 已知问题.md                # 已知限制与问题
 ```
+
+---
+
+## 衍生版本
+
+如果希望解读不只依赖 AI 自身的世界知识，而是基于具体的紫微斗数理论体系，可以使用衍生版：
+
+**[ziwei-zhongzhou-reader](https://github.com/zxsun2022/ziwei-zhongzhou-reader)** — 在本 Skill 的排盘能力基础上，内置《王亭之谈紫微斗数》中州派理论知识库（17 个主题参考文件），AI 会按需加载星系组合论、格局论等内容进行深度解读。
 
 ---
 
