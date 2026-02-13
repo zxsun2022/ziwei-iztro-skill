@@ -36,7 +36,7 @@
 git clone <仓库地址>
 
 # 2. 安装依赖（只需一次）
-cd ziwei-iztro-skill/scripts
+cd ziwei-iztro-reader/scripts
 npm install
 
 # 3. 重启 Claude Code，开始对话
@@ -59,6 +59,26 @@ Claude Code 会自动识别 `SKILL.md` 并加载 Skill。
 ### 其他 AI 工具
 
 Cursor、Windsurf 等支持 Skill 的工具各有不同的安装方式（如 Cursor 放在 `.cursor/skills/` 目录），请参考对应工具的 Skill 文档。核心文件是 `SKILL.md`，只要工具能读取它并执行 Node.js 脚本即可。
+
+---
+
+## 根目录脚本
+
+```bash
+cd ziwei-iztro-reader
+npm run install:deps
+npm run test
+npm run run -- example.input.json
+npm run regen:example
+```
+
+---
+
+## Agent 配置适配说明
+
+- `SKILL.md` 是跨平台核心入口，任何支持 Skill 文本指令的 Agent 都应优先读取它。
+- `agents/openai.yaml` 主要用于 OpenAI/Codex 系生态中的展示与默认提示词。
+- Cursor、Claude、Windsurf 等是否读取 `agents/openai.yaml` 取决于各平台实现；即使忽略该文件，`SKILL.md` 仍可独立工作。
 
 ---
 
@@ -121,7 +141,8 @@ AI 会在对话中主动询问以下信息（如果你没有提供）：
 ## 项目结构
 
 ```
-ziwei-iztro-skill/
+ziwei-iztro-reader/
+├── package.json               # 根目录统一入口脚本
 ├── SKILL.md                  # Skill 定义（AI 的指令文档）
 ├── scripts/
 │   ├── iztro_runner.mjs      # 排盘脚本（调用 iztro 生成命盘数据）
@@ -142,6 +163,21 @@ ziwei-iztro-skill/
 如果希望解读不只依赖 AI 自身的世界知识，而是基于具体的紫微斗数理论体系，可以使用衍生版：
 
 **[ziwei-zhongzhou-reader](https://github.com/zxsun2022/ziwei-zhongzhou-reader)** — 在本 Skill 的排盘能力基础上，内置《王亭之谈紫微斗数》中州派理论知识库（17 个主题参考文件），AI 会按需加载星系组合论、格局论等内容进行深度解读。
+
+---
+
+## 示例输出说明
+
+- `scripts/example.output.json` 是文档快照示例，不是回归测试黄金标准。
+- 示例输入 `scripts/example.input.json` 使用固定 `baseDate=2026-2-6` 以便结果可复现。
+- 需要刷新示例时，执行：`npm run regen:example`（仓库根目录）。
+
+---
+
+## 版本信息
+
+- 当前 Skill 版本：`v0.2.0`
+- 版本来源：Git Tag（以仓库中的 tag 为准）
 
 ---
 
